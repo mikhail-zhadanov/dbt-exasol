@@ -15,9 +15,9 @@
         {{ strategy.updated_at }} as {{ columns.dbt_updated_at }},
         {{ strategy.updated_at }} as {{ columns.dbt_valid_from }},
         {{ get_dbt_valid_to_current(strategy, columns) }}
-      {%- if strategy.hard_deletes == 'new_record' -%}
-        , 'False' as {{ columns.dbt_is_deleted }}
-      {% endif -%}
+      {%- if strategy.hard_deletes == 'new_record' %},
+        'False' as {{ columns.dbt_is_deleted }}
+      {%- endif %}
     from (
         {{ sql }}
     ) sbq
