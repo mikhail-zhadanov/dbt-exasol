@@ -170,13 +170,23 @@ AS
 {% macro exasol__alter_column_comment(relation, column_dict) -%}
   {# Comments on views are not supported outside DDL, see https://docs.exasol.com/db/latest/sql/comment.htm#UsageNotes #}
   {%- if not relation.is_view %}
-    {% set query_columns = get_columns_in_query(sql) %} 
-    COMMENT ON {{ relation.type }} {{ relation }} (
-    {% for column_name in query_columns %}
+    {% set existing_columns = adapter.get_columns_in_relation(relation) | map(attribute="name") | list %}
+    COMMENT ON {{ relation }} (
+    {% for column_name in existing_columns %}
       {{ get_column_comment_sql(column_name, column_dict) }} {{- ',' if not loop.last }}
     {% endfor %}
     );
   {%- endif %}
+{% endmacro %}
+
+{% macro exasol__persist_docs(relation, model, for_relation, for_columns) -%}
+  {% if for_relation and config.persist_relation_docs() and model.description %}
+    {% do run_query(alter_relation_comment(relation, model.description)) %}
+  {% endif %}
+
+  {% if for_columns and config.persist_column_docs() and model.columns %}
+    {% do run_query(alter_column_comment(relation, model.columns)) %}
+  {% endif %}
 {% endmacro %}
 
 {% macro persist_view_column_docs(relation, sql) %}
