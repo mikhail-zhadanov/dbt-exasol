@@ -177,7 +177,7 @@
             {%- if col.name in snapshotted_cols -%}
             snapshotted_data.{{ adapter.quote(col.column) }},
             {%- else -%}
-            CAST(NULL AS {{ col.dtype }}) as {{ adapter.quote(col.column) }},
+            CAST(NULL AS {{ col.data_type }}) as {{ adapter.quote(col.column) }},
             {%- endif -%}
             {% endfor -%}
             {%- if strategy.unique_key | is_list -%}
