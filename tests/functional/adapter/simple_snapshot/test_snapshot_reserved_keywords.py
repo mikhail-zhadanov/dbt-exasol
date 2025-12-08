@@ -78,6 +78,73 @@ snapshots__snapshot_reserved_new_record_sql = """
 """
 
 
+# Model with mixed column types (regular uppercase + quoted lowercase reserved keywords)
+models__source_mixed_columns_sql = """
+{{ config(materialized='table') }}
+
+select
+    cast(1 as integer) as ID,
+    cast('value1' as varchar(50)) as REGULAR_COL,
+    cast('2019-12-31T10:00:00.000000' as timestamp) as "time",
+    cast('alice' as varchar(50)) as "user"
+union all
+select 2, 'value2', cast('2019-12-31T11:00:00.000000' as timestamp), 'bob'
+"""
+
+# Snapshot mixing regular columns (uppercase) with reserved keyword columns (lowercase quoted)
+snapshots__snapshot_mixed_columns_sql = """
+{% snapshot snapshot_mixed_columns %}
+    {{
+        config(
+            target_schema=schema,
+            strategy='timestamp',
+            unique_key=['ID', 'REGULAR_COL', '"time"'],
+            updated_at='"time"'
+        )
+    }}
+    select * from {{ ref('source_mixed_columns') }}
+{% endsnapshot %}
+"""
+
+# Snapshot with uppercase reserved keyword (TIME without quotes - becomes "TIME")
+snapshots__snapshot_uppercase_reserved_sql = """
+{% snapshot snapshot_uppercase_reserved %}
+    {{
+        config(
+            target_schema=schema,
+            strategy='timestamp',
+            unique_key=['ID', 'TIME_COL'],
+            updated_at='TIME_COL'
+        )
+    }}
+    select
+        ID,
+        REGULAR_COL,
+        "time" as TIME_COL
+    from {{ ref('source_mixed_columns') }}
+{% endsnapshot %}
+"""
+
+# Snapshot with explicitly quoted uppercase identifier ('"TIME"' pass-through)
+snapshots__snapshot_quoted_uppercase_sql = """
+{% snapshot snapshot_quoted_uppercase %}
+    {{
+        config(
+            target_schema=schema,
+            strategy='timestamp',
+            unique_key=['ID', '"EXPLICIT_TIME"'],
+            updated_at='"EXPLICIT_TIME"'
+        )
+    }}
+    select
+        ID,
+        REGULAR_COL,
+        "time" as "EXPLICIT_TIME"
+    from {{ ref('source_mixed_columns') }}
+{% endsnapshot %}
+"""
+
+
 class TestSnapshotReservedKeywords:
     """Test snapshots with reserved keywords in column names"""
 
@@ -258,3 +325,145 @@ class TestSnapshotReservedKeywordsWithNewRecord:
             fetch="one"
         )
         assert results[0] == 2, f"Expected 2 records for field_id=1, got {results[0]}"
+
+
+class TestSnapshotMixedColumnTypes:
+    """
+    Test Case A: Mixed Column Types
+    Verify mixing regular columns (uppercase) with reserved keyword columns (lowercase quoted)
+    """
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"source_mixed_columns.sql": models__source_mixed_columns_sql}
+
+    @pytest.fixture(scope="class")
+    def snapshots(self):
+        return {"snapshot_mixed_columns.sql": snapshots__snapshot_mixed_columns_sql}
+
+    def test_snapshot_mixed_columns_initial(self, project):
+        """
+        Test that snapshot with mixed column types (regular + reserved keywords) works correctly.
+        """
+        # Initial model and snapshot
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+
+        # Verify: all 2 records should be created
+        results = project.run_sql(
+            "SELECT COUNT(*) as cnt FROM {schema}.snapshot_mixed_columns",
+            fetch="one"
+        )
+        assert results[0] == 2, f"Expected 2 records, got {results[0]}"
+
+    def test_snapshot_mixed_columns_update(self, project):
+        """
+        Test that updates work correctly with mixed column types.
+        """
+        # Initial model and snapshot
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+
+        # Update the reserved keyword column
+        project.run_sql(
+            """UPDATE {schema}.source_mixed_columns
+               SET "time" = TO_TIMESTAMP('2020-01-15T10:00:00.000000', 'YYYY-MM-DDTHH:MI:SS.FF6')
+               WHERE ID = 1"""
+        )
+
+        # Run snapshot again
+        run_dbt(["snapshot"])
+
+        # Verify: record with ID=1 should have 2 records (old closed, new current)
+        results = project.run_sql(
+            """SELECT COUNT(*) as cnt FROM {schema}.snapshot_mixed_columns
+               WHERE ID = 1""",
+            fetch="one"
+        )
+        assert results[0] == 2, f"Expected 2 records for ID=1, got {results[0]}"
+
+
+class TestSnapshotUppercaseReservedKeyword:
+    """
+    Test Case B: Uppercase Reserved Keywords
+    Test unique_key='TIME_COL' (unquoted, becomes uppercase) vs '"time"' (quoted lowercase)
+    """
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"source_mixed_columns.sql": models__source_mixed_columns_sql}
+
+    @pytest.fixture(scope="class")
+    def snapshots(self):
+        return {"snapshot_uppercase_reserved.sql": snapshots__snapshot_uppercase_reserved_sql}
+
+    def test_snapshot_uppercase_reserved_initial(self, project):
+        """
+        Test that unquoted column names are properly uppercased and quoted.
+        """
+        # Initial model and snapshot
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+
+        # Verify: all 2 records should be created
+        results = project.run_sql(
+            "SELECT COUNT(*) as cnt FROM {schema}.snapshot_uppercase_reserved",
+            fetch="one"
+        )
+        assert results[0] == 2, f"Expected 2 records, got {results[0]}"
+
+
+class TestSnapshotQuotedUppercaseIdentifier:
+    """
+    Test Case C: All-Uppercase Quoted Identifier
+    Test '"EXPLICIT_TIME"' (quoted uppercase) pass-through behavior
+    """
+
+    @pytest.fixture(scope="class")
+    def models(self):
+        return {"source_mixed_columns.sql": models__source_mixed_columns_sql}
+
+    @pytest.fixture(scope="class")
+    def snapshots(self):
+        return {"snapshot_quoted_uppercase.sql": snapshots__snapshot_quoted_uppercase_sql}
+
+    def test_snapshot_quoted_uppercase_initial(self, project):
+        """
+        Test that explicitly quoted uppercase identifiers are passed through as-is.
+        """
+        # Initial model and snapshot
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+
+        # Verify: all 2 records should be created
+        results = project.run_sql(
+            "SELECT COUNT(*) as cnt FROM {schema}.snapshot_quoted_uppercase",
+            fetch="one"
+        )
+        assert results[0] == 2, f"Expected 2 records, got {results[0]}"
+
+    def test_snapshot_quoted_uppercase_update(self, project):
+        """
+        Test that updates work correctly with explicitly quoted uppercase identifiers.
+        """
+        # Initial model and snapshot
+        run_dbt(["run"])
+        run_dbt(["snapshot"])
+
+        # Update the source column that feeds EXPLICIT_TIME
+        project.run_sql(
+            """UPDATE {schema}.source_mixed_columns
+               SET "time" = TO_TIMESTAMP('2020-01-15T10:00:00.000000', 'YYYY-MM-DDTHH:MI:SS.FF6')
+               WHERE ID = 1"""
+        )
+
+        # Run snapshot again
+        run_dbt(["snapshot"])
+
+        # Verify: record with ID=1 should have 2 records
+        results = project.run_sql(
+            """SELECT COUNT(*) as cnt FROM {schema}.snapshot_quoted_uppercase
+               WHERE ID = 1""",
+            fetch="one"
+        )
+        assert results[0] == 2, f"Expected 2 records for ID=1, got {results[0]}"

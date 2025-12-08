@@ -13,13 +13,13 @@
     - Regular columns are created without quotes and stored as UPPERCASE
     - Reserved keyword columns should be specified with quotes in the config: '"time"'
 #}
-{% macro exasol__quote_column(col) %}
+{% macro exasol__quote_column(col) -%}
     {%- if col.startswith('"') and col.endswith('"') -%}
-        {{ col }}
+        {{- col -}}
     {%- else -%}
-        {{ adapter.quote(col | upper) }}
+        {{- adapter.quote(col | upper) -}}
     {%- endif -%}
-{% endmacro %}
+{%- endmacro %}
 
 {#
     Build properly quoted scd_args for Exasol snapshots.
@@ -39,8 +39,18 @@
 {% endmacro %}
 
 {#
-    Override snapshot_timestamp_strategy to properly quote column names for Exasol.
-    Note: No exasol__ prefix because strategy_dispatch doesn't use adapter.dispatch.
+    IMPORTANT: Global override of snapshot_timestamp_strategy.
+
+    This macro does NOT use the exasol__ prefix because dbt's strategy_dispatch()
+    function does not use adapter.dispatch() - it directly calls the strategy macro
+    by name. Therefore, we must override the global macro to intercept it for Exasol.
+
+    WARNING: In multi-adapter environments where multiple adapter packages are loaded,
+    this global override may cause conflicts. This is a known limitation of dbt's
+    snapshot strategy dispatch mechanism. For Exasol-only projects, this works correctly.
+
+    Purpose: Properly quote column names (unique_key, updated_at) to handle SQL
+    reserved keywords like TIME, DATE, USER, etc.
 #}
 {% macro snapshot_timestamp_strategy(node, snapshotted_rel, current_rel, model_config, target_exists) %}
     {% set primary_key = config.get('unique_key') %}
